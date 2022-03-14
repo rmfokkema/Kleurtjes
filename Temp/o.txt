@@ -1,0 +1,790 @@
+	  //
+	  //  CameraViewController.swift
+	  //  Temp
+	  //
+	  //  Created by René Fokkema on 12/08/2021.
+	  //
+
+import UIKit
+import AVFoundation
+import AVKit
+import Photos
+
+class CameraViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+
+	  @IBOutlet weak var labelx1: UILabel!
+	  @IBOutlet weak var labely1: UILabel!
+	  @IBOutlet weak var labelx2: UILabel!
+	  @IBOutlet weak var labely2: UILabel!
+
+	  @IBOutlet weak var viewView: UIView!
+
+	  private enum cameraPosition : Int {
+			 case back = 1
+			 case front = 2
+	  }
+
+	  private var currentPosition: cameraPosition = .front
+
+	  private enum zoomFactor: CGFloat {
+			 case back = 40.0
+			 case front = 10.0
+	  }
+	  private var zoomFactor: CGFloat = 1.0
+	  private var newZoomFactor: CGFloat = 1.0
+	  private var maxZoomFactor: zoomFactor = .back
+
+	  private var frontCamSession = AVCaptureSession()
+	  private var backCamSession = AVCaptureSession()
+
+	  //private let frontSessionQueue = DispatchQueue(label: "front queue")
+	  //private let backSessionQueue = DispatchQueue(label: "back queue")
+
+
+			 //private let videoQueue = DispatchQueue(label: "video queue")
+			 //private let audioQueue = DispatchQueue(label: "audio queue")
+
+	  @objc dynamic var frontVideoInput: AVCaptureDeviceInput!
+	  @objc dynamic var backVideoInput: AVCaptureDeviceInput!
+
+	  //@objc dynamic var audioInput: AVCaptureDeviceInput!
+
+	  //private var panToZoomStartLocation: CGFloat!
+
+	  @IBOutlet private weak var previewViewFront: PreviewView!
+	  @IBOutlet private weak var previewViewBack: PreviewView!
+
+	  private var currentView: PreviewView!
+
+	  //@IBOutlet weak var playerView: UIView!
+
+	  var blurView: UIView!
+	  var isRecording: Bool = false
+	  var isVideoRecording: Bool = false
+
+	  private enum SessionSetupResult {
+			 case success
+			 case notAuthorized
+			 case configurationFailed
+	  }
+
+	  private var videoURL:URL?, audioURL:URL?
+
+	  private var videoOutput = AVCaptureVideoDataOutput()
+	  private var audioOutput = AVCaptureAudioDataOutput()
+
+	  private var sessionAtSourceTime:CMTime?
+
+	  private var videoWriter:AVAssetWriter?
+	  private var audioWriter:AVAssetWriter?
+
+	  private var videoWriterInput: AVAssetWriterInput?
+	  private var audioWriterInput: AVAssetWriterInput?
+
+	  private var setupResult: SessionSetupResult = .success
+
+	  override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation { return .slide }
+	  override var prefersStatusBarHidden: Bool { return true }
+	  override var prefersHomeIndicatorAutoHidden: Bool { return true }
+
+	  override func viewDidLoad() {
+			 super.viewDidLoad()
+
+			 viewView.isUserInteractionEnabled = false
+
+			 setOverlay()
+			 //view.isMultipleTouchEnabled = true
+			 // self.setOverlay()
+			setTapRecognizers()
+
+					//usesApplicationAudioSession
+					//self.session.automaticallyConfiguresApplicationAudioSession = false
+
+//			 previewViewFront.session = frontCamSession
+//			 previewViewFront.videoPreviewLayer.videoGravity = .resizeAspectFill
+//
+//			 previewViewBack.session = backCamSession
+//			 previewViewBack.videoPreviewLayer.videoGravity = .resizeAspectFill
+
+			 //self.configureSession(.front)
+			 //self.configureSession(.back)
+
+			 //currentView = previewViewFront
+
+					// videoOutput.videoSettings = [:]
+					//videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
+					//audioOutput.setSampleBufferDelegate(self, queue: videoQueue)
+	  }
+
+	  override func viewWillAppear(_ animated: Bool) {
+			 super.viewWillAppear(animated)
+
+			 if self.setupResult != .success { return }
+
+			 // self.frontCamSession.startRunning()
+
+			 setNeedsStatusBarAppearanceUpdate()
+			 setNeedsUpdateOfHomeIndicatorAutoHidden()
+
+			 // self.backCamSession.startRunning()
+
+	  }
+
+	  @objc private func toggleOverlay() {
+			 guard let blurView = self.blurView else { return }
+
+			 UIView.animate(withDuration: 0.4, animations: {
+					blurView.alpha = (blurView.alpha > 0.0) ? 0.0 : 1.0
+			 }, completion: { _ in
+					self.viewView.isUserInteractionEnabled = self.viewView.isUserInteractionEnabled ? false : true
+			 })
+	  }
+
+	  /* override func viewDidAppear(_ animated: Bool) {
+			 super.viewDidAppear(animated)
+
+			 /* let alert = UIAlertController(title: nil, message: "Debug mode?", preferredStyle: .actionSheet)
+			  alert.addAction(UIAlertAction(title: "Yes", style: .default, handler: { _ in
+			  self.debugMode = true
+			  self.previewView.isUserInteractionEnabled = true
+			  }))
+			  alert.addAction(UIAlertAction(title: "No", style: .destructive, handler: { _ in
+			  self.debugMode = false
+			  self.previewView.isUserInteractionEnabled = true
+			  }))
+			  self.present(alert, animated: true) {
+			  self.previewView.isUserInteractionEnabled = false
+			  } */
+	  } */
+
+//	  override func viewWillDisappear(_ animated: Bool) {
+//			 super.viewWillDisappear(animated)
+//
+//			 if self.setupResult != .success { return }
+//
+//			 self.backCamSession.stopRunning()
+//			 self.frontCamSession.stopRunning()
+//	  }
+
+	  private func setOverlay() {
+			 if !UIAccessibility.isReduceTransparencyEnabled {
+					let blurEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+					blurView = UIVisualEffectView(effect: blurEffect)
+			 } else {
+					blurView = UIView()
+					blurView.backgroundColor = .black
+					blurView.alpha = 0.5
+			 }
+
+			 blurView.frame = view.frame
+			 blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+			 view.addSubview(blurView)
+	  }
+
+	  private func setTapRecognizers() {
+			 //let doubleTap = UITapGestureRecognizer(target: self, action: #selector(changeCamera))
+			 //doubleTap.numberOfTapsRequired = 2
+			 //view.addGestureRecognizer(doubleTap)
+
+			 let overlayTap = UITapGestureRecognizer(target: self, action: #selector(toggleOverlay))
+			 overlayTap.numberOfTapsRequired = 1
+			 overlayTap.numberOfTouchesRequired = 1
+			 blurView.addGestureRecognizer(overlayTap)
+
+			 let newViewTap = UITapGestureRecognizer(target: self, action: #selector(addView))
+			 newViewTap.numberOfTouchesRequired = 2
+			 newViewTap.numberOfTapsRequired = 1
+			 view.addGestureRecognizer(newViewTap)
+print("Set!")
+			
+
+			 //previewViewBack.addGestureRecognizer(pinch)
+
+//			 let panGesture = UIPanGestureRecognizer(target: self, action: #selector(panToZoom))
+//			 panGesture.minimumNumberOfTouches = 1
+//			 panGesture.maximumNumberOfTouches = 1
+//			 view.addGestureRecognizer(panGesture)
+	  }
+
+	  @objc func addView(sender: UIGestureRecognizer) {
+			 let orig = sender.location(in: view)
+			 let rand = CGFloat.random(in: (view.frame.width / 3)...(view.frame.width / 2))
+			 let size = CGSize(width: rand, height: rand)
+
+			 let frame = CGRect(origin: orig, size: size)
+			 let new = PreviewView(frame: frame)
+
+			 new.backgroundColor = .random
+
+			 view.insertSubview(new, at: 1)
+	  }
+
+
+
+//	  var theEvent: UIEvent!
+//	  var activeTouches: [UITouch]()
+
+
+
+	  
+
+	  /* private func configureSession() {
+
+		if setupResult != .success { return }
+
+		session.beginConfiguration()
+		session.sessionPreset = .high
+		do {
+		var defaultVideoDevice: AVCaptureDevice?
+
+		// .builtInDualWideCamera = groothoek
+		// .builtInWideAngleCamera = standaard
+		// ! .builtInDualCamera
+		// ! .builtInTelephotoCamera
+		// ! .builtInTrueDepthCamera
+		defaultVideoDevice = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back)
+
+		guard let videoDevice = defaultVideoDevice else {
+		setupResult = .configurationFailed
+		session.commitConfiguration()
+		return
+		}
+
+		let videoInput = try AVCaptureDeviceInput(device: videoDevice)
+
+		if session.canAddInput(videoInput) {
+		session.addInput(videoInput)
+		self.videoInput = videoInput
+
+		//DispatchQueue.main.async { self.previewView.videoPreviewLayer.videoGravity = .resizeAspectFill }
+		} else {
+		setupResult = .configurationFailed
+		session.commitConfiguration()
+		return
+		}
+		} catch {
+
+		setupResult = .configurationFailed
+		session.commitConfiguration()
+		return
+		}
+
+		do {
+		let audioDevice = AVCaptureDevice.default(for: .audio)
+		let audioDeviceInput = try AVCaptureDeviceInput(device: audioDevice!)
+
+		if session.canAddInput(audioDeviceInput) {
+		session.addInput(audioDeviceInput)
+		} else {
+
+		}
+		} catch {}
+
+		let movieFileOutput = AVCaptureMovieFileOutput()
+		self.session.addOutput(movieFileOutput)
+		if let connection = movieFileOutput.connection(with: .video) {
+		if connection.isVideoStabilizationSupported {
+		connection.preferredVideoStabilizationMode = .auto
+		}
+		}
+		self.session.commitConfiguration()
+
+		self.movieFileOutput = movieFileOutput
+		} */
+
+	  private func configureSession(_ position: cameraPosition) {
+
+			 guard setupResult == .success else { return }
+
+			 let session = position == .front ? frontCamSession : backCamSession
+					//let cameraPosition = position == .front ? AVCaptureDevice.Position.front : AVCaptureDevice.Position.back
+
+			 session.beginConfiguration()
+
+			 do {
+						  // TRY EVERYTHING :)
+
+					session.sessionPreset = .low
+
+					let defaultVideoDevice = (position == .front) ? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) : AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+
+					guard let videoDevice = defaultVideoDevice else {
+						  print("Device not fount: ", defaultVideoDevice as Any)
+						  setupResult = .configurationFailed
+						  session.commitConfiguration()
+						  return
+					}
+
+					let videoInput = try AVCaptureDeviceInput(device: videoDevice)
+					if session.canAddInput(videoInput) {
+
+						  session.addInput(videoInput)
+
+						  if (position == .back) {
+								 self.backVideoInput = videoInput
+						  } else {
+								 self.frontVideoInput = videoInput
+						  }
+
+						  print("Session:", session)
+						  print("Added input:", videoInput, "\n")
+
+
+					} else {
+						  setupResult = .configurationFailed
+					}
+
+					/*if session.canAddOutput(videoOutput) {
+					 session.addOutput(videoOutput)
+					 } else {
+					 setupResult = .configurationFailed
+					 }
+
+					 videoOutput.connection(with: .video)?.videoOrientation = .portrait
+
+					 let defaultAudioDevice = AVCaptureDevice.default(for: .audio)
+
+					 guard let audioDevice = defaultAudioDevice else {
+					 session.commitConfiguration()
+					 setupResult = .configurationFailed
+					 return
+					 }
+
+					 let audioInput = try AVCaptureDeviceInput(device: audioDevice)
+
+					 if session.canAddInput(audioInput) {
+					 self.audioInput = audioInput
+					 session.addInput(self.audioInput!)
+					 }
+
+					 if session.canAddOutput(audioOutput) {
+					 session.addOutput(audioOutput)
+					 }*/
+
+			 } catch {
+						  // CATCH ERRORS IF EVERYTHING TRIED, OR SOME OF THE THINGS... DIDN'T WORK!
+					print("Configuring session failed :( –", error)
+					setupResult = .configurationFailed
+			 }
+
+			 session.commitConfiguration()
+
+			 print(String(describing: setupResult))
+	  }
+
+	  @objc private func toggleRecording() {
+
+			 if (currentPosition == .front) {
+					backCamSession.startRunning()
+					currentView = previewViewBack
+			 } else {
+					frontCamSession.startRunning()
+					currentView = previewViewFront
+			 }
+
+			 currentPosition = currentPosition == .front ? .back : .front
+
+			 print("back:", previewViewBack.layer.frame)
+			 print("front:", previewViewBack.layer.frame)
+
+			 print("back:", previewViewBack.layer.bounds)
+			 print("front:", previewViewBack.layer.bounds)
+
+			 // self.toggleOverlay()
+
+			 /*
+			  isVideoRecording = true
+
+			  if !isRecording {
+			  videoURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+			  audioURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
+
+			  setUpWriters()
+			  } else {
+			  videoWriterInput!.markAsFinished()
+			  audioWriterInput!.markAsFinished()
+
+			  print("Files as finished.")
+
+			  videoWriter!.finishWriting {
+			  self.videoSessionAtSourceTime = nil
+			  }
+
+			  audioWriter!.finishWriting {
+			  self.audioSessionAtSourceTime = nil
+			  DispatchQueue.main.async {
+			  let items = [self.videoURL!, self.audioURL!]
+			  self.shareItems(items)
+			  }
+			  }
+			  }
+
+			  resetZoomFactor(true)
+
+			  isRecording = !isRecording ? true : false
+			  */
+
+	  }
+
+	  func setUpWriters() {
+
+			 do {
+					videoWriter = try AVAssetWriter(outputURL: videoURL!, fileType: .mp4)
+					audioWriter = try AVAssetWriter(outputURL: audioURL!, fileType: .m4a)
+
+					videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+						  AVVideoCodecKey : AVVideoCodecType.h264,
+						  AVVideoWidthKey : 720,
+						  AVVideoHeightKey : 1280,
+						  AVVideoCompressionPropertiesKey : [
+								 AVVideoAverageBitRateKey : 2300000,
+						  ],
+					])
+
+					audioWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+						  AVFormatIDKey : kAudioFormatMPEG4AAC,
+						  AVNumberOfChannelsKey : 2,
+						  AVSampleRateKey : 44100.0,
+						  AVEncoderBitRateKey: 192000,
+					])
+
+					videoWriterInput!.expectsMediaDataInRealTime = true
+					audioWriterInput!.expectsMediaDataInRealTime = true
+
+					if videoWriter!.canAdd(videoWriterInput!) {
+						  videoWriter!.add(videoWriterInput!)
+					}
+					if audioWriter!.canAdd(audioWriterInput!) {
+						  audioWriter!.add(audioWriterInput!)
+					}
+
+					videoWriter!.startWriting()
+					audioWriter!.startWriting()
+
+			 } catch let error {
+					debugPrint(error.localizedDescription)
+			 }
+
+
+	  }
+
+	  internal func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+
+			 guard isRecording else { return }
+
+			 if output == videoOutput {
+
+					if sessionAtSourceTime == nil,
+						videoWriter?.status == .writing,
+						audioWriter?.status == .writing {
+								 // start writing
+						  sessionAtSourceTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+						  videoWriter!.startSession(atSourceTime: sessionAtSourceTime!)
+						  audioWriter!.startSession(atSourceTime: sessionAtSourceTime!)
+
+						  print("Writing...")
+					}
+
+					if isVideoRecording, videoWriterInput!.isReadyForMoreMediaData {
+						  videoWriterInput!.append(sampleBuffer)
+					}
+			 }
+
+			 if output == audioOutput {
+
+
+					if audioWriterInput!.isReadyForMoreMediaData {
+						  audioWriterInput!.append(sampleBuffer)
+					}
+			 }
+
+	  }
+
+	  /*internal func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+
+		guard isRecording else { return }
+		
+		if output == videoOutput {
+
+		if videoWriterInput!.isReadyForMoreMediaData {
+		videoWriterInput!.append(sampleBuffer)
+		}
+
+		print("Video frames dropped...!")
+
+		}
+		if output == audioOutput { print("Audio segments dropped...!") }
+		}*/
+
+
+
+	  /* @objc private func toggleRecording() {
+
+		if !self.debugMode {
+
+		guard let movieFileOutput = self.movieFileOutput, let audioRecorder = self.audioRecorder else {
+		print("No movieFileOutput or audioRecorder! :(")
+		return
+		}
+
+		sessionQueue.async {
+		if !movieFileOutput.isRecording {
+
+		audioRecorder.prepareToRecord()
+
+		if UIDevice.current.isMultitaskingSupported { self.backgroundRecordingID = UIApplication.shared.beginBackgroundTask(expirationHandler: nil) }
+		let movieFileOutputConnection = movieFileOutput.connection(with: .video)
+		let availableVideoCodecTypes = movieFileOutput.availableVideoCodecTypes
+		if availableVideoCodecTypes.contains(.hevc) {
+		movieFileOutput.setOutputSettings([AVVideoCodecKey: AVVideoCodecType.hevc], for: movieFileOutputConnection!)
+		}
+		let outputFileName = NSUUID().uuidString
+		let outputFilePath = (NSTemporaryDirectory() as NSString).appendingPathComponent((outputFileName as NSString).appendingPathExtension("mov")!)
+		movieFileOutput.startRecording(to: URL(fileURLWithPath: outputFilePath), recordingDelegate: self)
+		audioRecorder.record()
+		} else {
+		movieFileOutput.stopRecording()
+		audioRecorder.stop()
+		print("Stop recording.")
+		UIApplication.shared.endBackgroundTask(self.backgroundRecordingID!)
+		}
+		}
+		}
+
+		self.toggleOverlay()
+
+		self.isRecording = !self.isRecording ? true : false
+		} */
+
+	  /* @objc private func changeCamera() {
+
+			 if currentPosition == .front {
+					previewView.session = backCamSession
+					backSessionQueue.async { self.backCamSession.startRunning() }
+					currentPosition = .back
+			 }else if currentPosition == .back {
+					previewView.session = frontCamSession
+					frontSessionQueue.async { self.frontCamSession.startRunning() }
+					currentPosition = .front
+			 }
+
+			 print("Front:", frontCamSession.isRunning, ", back:",  backCamSession.isRunning)
+
+					//self.resetZoomFactor(false)
+
+			 print("Session set to:", previewView.session)
+	  } */
+
+//	  @objc func panToZoom(sender: UIPanGestureRecognizer) {
+//
+//			 if sender.state == .began {
+//					try? self.videoInput.device.lockForConfiguration()
+//					self.panToZoomStartLocation = sender.location(in: view).y
+//			 }
+//
+//			 let zoomFactorAddition = self.maxZoomFactor.rawValue * ( -sender.translation(in: view).y / self.panToZoomStartLocation )
+//
+//			 self.newZoomFactor = self.zoomFactor + zoomFactorAddition
+//			 if self.newZoomFactor < 1.0 { self.newZoomFactor = 1.0 }
+//			 if self.newZoomFactor > self.maxZoomFactor.rawValue { self.newZoomFactor = self.maxZoomFactor.rawValue }
+//
+//			 self.videoInput.device.videoZoomFactor = self.newZoomFactor
+//
+//			 if sender.state == .ended {
+//					self.zoomFactor = self.newZoomFactor
+//					self.videoInput.device.unlockForConfiguration()
+//			 }
+//	  }
+
+	  /* func resetZoomFactor(_ settingDeviceZoomFactor: Bool) {
+
+	  self.zoomFactor = 1.0
+	  self.newZoomFactor = 1.0
+
+	  if (!settingDeviceZoomFactor) { return }
+
+	  _ = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { timer in
+			 try? self.videoInput.device.lockForConfiguration()
+			 if self.videoInput.device.videoZoomFactor / 1.5 > 1.0 {
+					self.videoInput.device.videoZoomFactor /= 1.5
+			 } else {
+					self.videoInput.device.videoZoomFactor = 1.0
+					self.videoInput.device.unlockForConfiguration()
+					timer.invalidate()
+			 }
+	  }
+
+} */
+
+	  func shareItems(_ items: [URL]) {
+			 let shareViewController : UIActivityViewController = UIActivityViewController(
+					activityItems: items, applicationActivities: nil)
+
+			 shareViewController.excludedActivityTypes = [
+					UIActivity.ActivityType.postToWeibo,
+					//UIActivity.ActivityType.print,
+					UIActivity.ActivityType.assignToContact,
+					//UIActivity.ActivityType.saveToCameraRoll,
+					UIActivity.ActivityType.addToReadingList,
+					UIActivity.ActivityType.postToFlickr,
+					UIActivity.ActivityType.postToVimeo,
+					UIActivity.ActivityType.postToTencentWeibo,
+					UIActivity.ActivityType.postToFacebook
+			 ]
+
+			 shareViewController.title = "Share temporary items?"
+			 self.present(shareViewController, animated: true, completion: nil)
+	  }
+
+	  /* func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+
+		self.assetURLs.append(outputFileURL)
+
+		print("Output URL: ", outputFileURL)
+		print("isRecording: ", self.isRecording)
+
+		if !self.isRecording {
+		/* if let currentBackgroundRecordingID = backgroundRecordingID {
+		 backgroundRecordingID = UIBackgroundTaskIdentifier.invalid
+		 if currentBackgroundRecordingID != UIBackgroundTaskIdentifier.invalid {
+		 UIApplication.shared.endBackgroundTask(currentBackgroundRecordingID)
+		 }
+		 } */
+
+		print("Merging...\n\n")
+		self.doMerge()
+		}
+		} */
+
+	  /* private func doMerge()  {
+		var insertTime = CMTime.zero
+		var arrayLayerInstructions:[AVMutableVideoCompositionLayerInstruction] = []
+		let outputSize = CGSize(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+		let mixComposition = AVMutableComposition()
+
+		for url in self.assetURLs {
+		// Get video track
+		let videoAsset = AVAsset(url: url)
+		guard let videoTrack = videoAsset.tracks(withMediaType: AVMediaType.video).first else { continue }
+
+		// Get audio track
+		var audioTrack:AVAssetTrack?
+		if videoAsset.tracks(withMediaType: AVMediaType.audio).count > 0 {
+		audioTrack = videoAsset.tracks(withMediaType: AVMediaType.audio).first
+		}
+		let videoCompositionTrack = mixComposition.addMutableTrack(withMediaType: AVMediaType.video,
+		preferredTrackID: Int32(kCMPersistentTrackID_Invalid))
+
+		let audioCompositionTrack = mixComposition.addMutableTrack(withMediaType: AVMediaType.audio,
+		preferredTrackID: Int32(kCMPersistentTrackID_Invalid))
+
+		do {
+		let startTime = CMTime.zero
+		let duration = videoAsset.duration
+
+		try videoCompositionTrack?.insertTimeRange(CMTimeRangeMake(start: startTime, duration: duration),
+		of: videoTrack,
+		at: insertTime)
+
+		if let audioTrack = audioTrack {
+		try audioCompositionTrack?.insertTimeRange(CMTimeRangeMake(start: startTime, duration: duration),
+		of: audioTrack,
+		at: insertTime)
+		}
+		let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoCompositionTrack!)
+
+		let transform = videoTrack.preferredTransform
+		let aspectFillRatio = UIScreen.main.bounds.height / videoTrack.naturalSize.width
+		let scaleFactor = CGAffineTransform(scaleX: aspectFillRatio, y: aspectFillRatio)
+
+
+		layerInstruction.setTransform(transform.concatenating(scaleFactor), at: CMTime.zero)
+
+		let endTime = CMTimeAdd(insertTime, duration)
+		layerInstruction.setOpacity(0, at: endTime)
+
+		arrayLayerInstructions.append(layerInstruction)
+
+		insertTime = CMTimeAdd(insertTime, duration)
+		}
+		catch {
+
+		}
+		}
+
+		let mainInstruction = AVMutableVideoCompositionInstruction()
+		mainInstruction.timeRange = CMTimeRangeMake(start: CMTime.zero, duration: insertTime)
+		mainInstruction.layerInstructions = arrayLayerInstructions
+
+		let mainComposition = AVMutableVideoComposition()
+		mainComposition.instructions = [mainInstruction]
+		mainComposition.frameDuration = CMTimeMake(value: 1, timescale: 30)
+		mainComposition.renderSize = outputSize
+
+		let dateFormatter = DateFormatter()
+		dateFormatter.dateFormat = "HH.mm.ss"
+		let date = dateFormatter.string(from: Date())
+		let path = NSTemporaryDirectory().appending("\(date).mov")
+		let exportURL = URL.init(fileURLWithPath: path)
+
+		let exporter = AVAssetExportSession.init(asset: mixComposition, presetName: AVAssetExportPresetHighestQuality)
+		exporter?.outputURL = exportURL
+		exporter?.outputFileType = AVFileType.mov
+		exporter?.shouldOptimizeForNetworkUse = true
+		exporter?.videoComposition = mainComposition
+
+		exporter?.exportAsynchronously(completionHandler: {
+		DispatchQueue.main.async {
+		self.exportDidFinish(exporter!)
+		}
+		})
+
+		} */
+
+	  /* func exportDidFinish(_ session: AVAssetExportSession) {
+
+		guard
+		session.status == AVAssetExportSession.Status.completed,
+		let outputURL = session.outputURL
+		else { return }
+
+		UISaveVideoAtPathToSavedPhotosAlbum(outputURL.relativePath, self, #selector(videoWasSaved), nil)
+		/*
+
+		 print("Exported to: \(session.outputURL!.absoluteString)")
+
+		 let dateFormatter = DateFormatter()
+		 dateFormatter.dateFormat = "HH.mm.ss"
+		 let date = dateFormatter.string(from: Date())
+
+		 let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+		 let newFileURL = documentsDir.appendingPathComponent("\(date).mov")
+
+		 do {
+		 try FileManager.default.moveItem(at: outputURL, to: newFileURL)
+		 print("Moved from \(outputURL) to \(newFileURL)")
+		 } catch {
+		 print("Moving item do documents dir didn't work :(, \(error)")
+		 } */
+		} */
+
+	  /* @objc func videoWasSaved(videoPath: NSString, didFinishSavingWithError error: NSError?, contextInfo info: AnyObject) {
+		self.cleanupTempFiles()
+		} */
+
+	  public func listTempFiles() {
+			 let tmpFiles = try? FileManager.default.contentsOfDirectory(at: URL(string: NSTemporaryDirectory())!, includingPropertiesForKeys: .none, options: .skipsHiddenFiles)
+
+			 for url in tmpFiles! {
+					/* do {
+					 try FileManager.default.removeItem(at: url)
+					 print("Removed: \(url)")
+					 } catch { print("Not removed: \(url)") } */
+					print(url.absoluteString)
+			 }
+					//self.assetURLs.removeAll()
+
+	  }
+
+}
+
